@@ -5,6 +5,7 @@ import numpy as np
 from tensorflow.keras.layers import Input, Dense, Conv2D, MaxPooling2D, Flatten, BatchNormalization, Dropout
 from tensorflow.keras.models import Model, clone_model
 from tensorflow.keras.optimizers import Adam
+from tensorflow.losses import huber_loss
 
 from collections import deque
 
@@ -84,10 +85,9 @@ class Agent:
             q_value = self.q_value(state)
             return np.argmax(q_value)
 
-    def eps_decay(self, step, n_steps=10000):
+    def eps_decay(self, step, eps_end=0.2, n_steps=10000):
         '''stepが進むごとに減衰'''
         eps_start = 1.0
-        eps_end = self.epsilon
         eps = max(eps_end, (eps_end - eps_start) / n_steps * step + eps_start)
         self.epsilon = eps
         return eps
@@ -126,8 +126,9 @@ memory_size = 100000  # メモリーサイズ
 initial_memory_size = 1000  # 事前に貯める経験数
 
 
-env = gym.make('MountainCar-v0')
-# env = gym.make('CartPole-v0')
+# env = gym.make('MountainCar-v0')
+# env = gym.make('Acrobot-v1')
+env = gym.make('CartPole-v0')
 
 obs_space = env.observation_space.shape[0]
 act_space = env.action_space.n
@@ -140,27 +141,29 @@ replay_memory.initialize(env, initial_memory_size)  # はじめにある程度�
 
 
 ### network ###
-lr = 0.001  # 学習率
+lr = 0.0001  # 学習率
 
-inputs = Input(shape=(obs_space, ))
-x = Dense(32, activation='relu', kernel_initializer="he_uniform")(inputs)
-x = Dropout(0.25)(x)
-x = Dense(32, activation='relu', kernel_initializer="he_uniform")(x)
-x = Dropout(0.5)(x)
-outputs = Dense(act_space, kernel_initializer="he_uniform")(x)
+state = Input(shape=(obs_space, ))
+x = Dense(16, activation='relu', kernel_initializer="he_uniform")(state)
+x = BatchNormalization()(x)
+x = Dense(16, activation='relu', kernel_initializer="he_uniform")(x)
+x = BatchNormalization()(x)
+x = Dense(16, activation='relu', kernel_initializer="he_uniform")(x)
+x = BatchNormalization()(x)
+action = Dense(act_space, kernel_initializer="he_uniform")(x)
 
-model = Model(inputs=inputs, outputs=outputs)
+model = Model(inputs=state, outputs=action)
 model.summary()
 
-model.compile(loss='mean_squared_error', optimizer=Adam(lr=lr))
+model.compile(loss=huber_loss, optimizer=Adam(lr=lr))
 
 
 ### train loop ###
 discount_rate = 0.99  # 割引率
-eps = 0.05
+eps = 0.1
 target_update_interval_steps = 1000  # 重みの更新間隔
-batch_size = 64
-n_episodes = 300
+batch_size = 32
+n_episodes = 1000
 total_steps = 0
 
 ## Agentを定義
@@ -183,11 +186,11 @@ for episode in range(n_episodes):
         q_value = agent.q_value(np.array([state]))
         episode_q_max.append(np.max(q_value))
 
-        # eps = agent.eps_decay(total_steps, n_steps=200*200) # epsilonを減衰
+        temp_eps = agent.eps_decay(total_steps, eps_end=eps, n_steps=200*50) # epsilonを減衰
         action = agent.policy(np.array([state]))  # policyにしたがってactionを選択
         next_state, reward, done, _ = env.step(action)
 
-        # reward = np.sign(reward)  # 報酬のクリッピング
+        reward = np.sign(reward)  # 報酬のクリッピング
         episode_rewards += reward  # エピソード内の報酬を更新
 
         experience = {
@@ -201,14 +204,14 @@ for episode in range(n_episodes):
 
         # train on batch
         train_batch = replay_memory.sample(batch_size)  # 経験のサンプリング
-        estimateds = agent.q_value(train_batch['state'])
-        q_target_next = agent.q_value(train_batch['next_state'], is_target=True)  # ターゲットQ値の計算
+        q_original = agent.q_value(train_batch['state'])  # オリジナルネットのQ(s,a)
+        q_target_next = agent.q_value(train_batch['next_state'], is_target=True)  # ターゲットネットのQ_theta(s',a)
+
         fixed_q_value = train_batch['reward'] + (1 - train_batch['done']) * discount_rate * np.max(q_target_next, axis=1)  # ベルマン方程式
+        for batch_index, action in enumerate(train_batch['action']):
+            q_original[batch_index][action] = fixed_q_value[batch_index]  # Q値を更新
 
-        for i, action in enumerate(train_batch['action']):
-            estimateds[i][action] = fixed_q_value[i]  # 取ったactionのQ値を更新
-
-        loss = agent.model.train_on_batch(x=train_batch['state'], y=estimateds)  # targetネットを教師信号として固定
+        loss = agent.model.train_on_batch(x=train_batch['state'], y=q_original)  # targetネットを教師信号として固定
         episode_loss.append(np.min(loss))
 
         state = next_state
@@ -222,6 +225,7 @@ for episode in range(n_episodes):
         total_steps += 1
 
     if (episode + 1) % 10 == 0:
-        print('Episode: {}, Reward: {}, Q_max: {:.4f}, loss_min: {:.4f}, eps: {:.4f}'.format(episode+1, episode_rewards, np.mean(episode_q_max), np.mean(episode_loss), eps))
+        print('Episode: {}, Reward: {}, Q_max: {:.4f}, loss_min: {:.4f}'.format(episode+1, episode_rewards, np.mean(episode_q_max), np.mean(episode_loss)))
+        print('eps: ', temp_eps)
         print('=== test play ===')
-        agent.play(env, n_episodes=1, render=True)
+        agent.play(env, n_episodes=3, render=False)
