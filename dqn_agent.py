@@ -2,7 +2,7 @@
 
 import gym
 import numpy as np
-from tensorflow.keras.layers import Input, Dense, Conv2D, MaxPooling2D, Flatten, BatchNormalization, Dropout
+from tensorflow.keras.layers import Input, Dense, Flatten, BatchNormalization
 from tensorflow.keras.models import Model, clone_model
 from tensorflow.keras.optimizers import Adam
 from tensorflow.losses import huber_loss
@@ -126,9 +126,9 @@ memory_size = 100000  # メモリーサイズ
 initial_memory_size = 1000  # 事前に貯める経験数
 
 
-# env = gym.make('MountainCar-v0')
+env = gym.make('MountainCar-v0')
 # env = gym.make('Acrobot-v1')
-env = gym.make('CartPole-v0')
+# env = gym.make('CartPole-v0')
 
 obs_space = env.observation_space.shape[0]
 act_space = env.action_space.n
@@ -228,4 +228,4 @@ for episode in range(n_episodes):
         print('Episode: {}, Reward: {}, Q_max: {:.4f}, loss_min: {:.4f}'.format(episode+1, episode_rewards, np.mean(episode_q_max), np.mean(episode_loss)))
         print('eps: ', temp_eps)
         print('=== test play ===')
-        agent.play(env, n_episodes=3, render=False)
+        agent.play(env, n_episodes=5, render=False)
