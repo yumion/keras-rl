@@ -211,7 +211,7 @@ for episode in range(n_episodes):
         for batch_index, action in enumerate(train_batch['action']):
             q_original[batch_index][action] = fixed_q_value[batch_index]  # Q値を更新
 
-        loss = agent.model.train_on_batch(x=(train_batch['state'], np.eye(act_space)[train_batch['action']], y=q_original)  # targetネットを教師信号として固定
+        loss = agent.model.train_on_batch(x=(train_batch['state'], np.eye(act_space)[train_batch['action']]), y=q_original)  # targetネットを教師信号として固定
         episode_loss.append(np.min(loss))
 
         state = next_state
