@@ -143,7 +143,7 @@ replay_memory.initialize(env, initial_memory_size)  # はじめにある程度�
 ### network ###
 lr = 0.0001  # 学習率
 
-state = Input(shape=(obs_space, ))
+state = Input(shape=(obs_space, act_space))
 x = Dense(16, activation='relu', kernel_initializer="he_uniform")(state)
 x = BatchNormalization()(x)
 x = Dense(16, activation='relu', kernel_initializer="he_uniform")(x)
@@ -211,7 +211,7 @@ for episode in range(n_episodes):
         for batch_index, action in enumerate(train_batch['action']):
             q_original[batch_index][action] = fixed_q_value[batch_index]  # Q値を更新
 
-        loss = agent.model.train_on_batch(x=train_batch['state'], y=q_original)  # targetネットを教師信号として固定
+        loss = agent.model.train_on_batch(x=(train_batch['state'], np.eye(act_space)[train_batch['action']], y=q_original)  # targetネットを教師信号として固定
         episode_loss.append(np.min(loss))
 
         state = next_state
