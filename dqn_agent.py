@@ -2,7 +2,7 @@
 
 import gym
 import numpy as np
-from tensorflow.keras.layers import Input, Dense, Flatten, BatchNormalization
+from tensorflow.keras.layers import Input, Dense, Flatten, BatchNormalization, concatenate
 from tensorflow.keras.models import Model, clone_model
 from tensorflow.keras.optimizers import Adam
 from tensorflow.losses import huber_loss
@@ -65,17 +65,18 @@ class Agent:
     '''policyとnetwork'''
     def __init__(self, action_space, epsilon=0.2):
         self.epsilon = epsilon
+        self.act_space = action_space
         self.actions = list(range(action_space))
         self.model = None
         self.target_model = None
 
-    def q_value(self, state, is_target=False):
+    def q_value(self, state, action, is_target=False):
         '''Q値を計算'''
         if not is_target:
             model = self.model
         else:
             model = self.target_model
-        return model.predict(state)
+        return model.predict([state, np.eye(self.act_space)[action]])
 
     def policy(self, state):
         '''epsilon-greedy policy'''
@@ -143,16 +144,18 @@ replay_memory.initialize(env, initial_memory_size)  # はじめにある程度�
 ### network ###
 lr = 0.0001  # 学習率
 
-state = Input(shape=(obs_space, act_space))
-x = Dense(16, activation='relu', kernel_initializer="he_uniform")(state)
-x = BatchNormalization()(x)
+state = Input(shape=(obs_space, ))
+action_input = Input(shape=(act_space, ))
+x = concatenate([state, action_input])
 x = Dense(16, activation='relu', kernel_initializer="he_uniform")(x)
 x = BatchNormalization()(x)
 x = Dense(16, activation='relu', kernel_initializer="he_uniform")(x)
 x = BatchNormalization()(x)
-action = Dense(act_space, kernel_initializer="he_uniform")(x)
+x = Dense(16, activation='relu', kernel_initializer="he_uniform")(x)
+x = BatchNormalization()(x)
+action_output = Dense(act_space, kernel_initializer="he_uniform")(x)
 
-model = Model(inputs=state, outputs=action)
+model = Model(inputs=[state, action_input], outputs=action_output)
 model.summary()
 
 model.compile(loss=huber_loss, optimizer=Adam(lr=lr))
@@ -174,6 +177,7 @@ agent.target_model = clone_model(model)  # target network
 
 for episode in range(n_episodes):
     state = env.reset()
+    action = env.action_space.sample()
     done = False
 
     steps_per_epi = 0
@@ -182,12 +186,15 @@ for episode in range(n_episodes):
     episode_loss = []
     while not done:
         # env.render()
+        state = np.array([state])
+        action = np.array([action])
         # Q値のログ
-        q_value = agent.q_value(np.array([state]))
+        q_value = agent.q_value(state, action)
         episode_q_max.append(np.max(q_value))
 
         temp_eps = agent.eps_decay(total_steps, eps_end=eps, n_steps=200*50) # epsilonを減衰
         action = agent.policy(np.array([state]))  # policyにしたがってactionを選択
+        # stepをすすめる
         next_state, reward, done, _ = env.step(action)
 
         reward = np.sign(reward)  # 報酬のクリッピング
@@ -204,14 +211,15 @@ for episode in range(n_episodes):
 
         # train on batch
         train_batch = replay_memory.sample(batch_size)  # 経験のサンプリング
-        q_original = agent.q_value(train_batch['state'])  # オリジナルネットのQ(s,a)
-        q_target_next = agent.q_value(train_batch['next_state'], is_target=True)  # ターゲットネットのQ_theta(s',a)
+        q_original = agent.q_value(train_batch['state'], train_batch['action'])  # オリジナルネットのQ(s,a)
+        q_target_next = agent.q_value(train_batch['next_state'], train_batch['action'], is_target=True)  # ターゲットネットのQ_theta(s',a)
 
         fixed_q_value = train_batch['reward'] + (1 - train_batch['done']) * discount_rate * np.max(q_target_next, axis=1)  # ベルマン方程式
         for batch_index, action in enumerate(train_batch['action']):
             q_original[batch_index][action] = fixed_q_value[batch_index]  # Q値を更新
 
-        loss = agent.model.train_on_batch(x=(train_batch['state'], np.eye(act_space)[train_batch['action']]), y=q_original)  # targetネットを教師信号として固定
+        action_one_hot = np.eye(act_space)[train_batch['action']]
+        loss = agent.model.train_on_batch(x=[train_batch['state'], action_one_hot], y=q_original)  # targetネットを教師信号として固定
         episode_loss.append(np.min(loss))
 
         state = next_state
